@@ -13,38 +13,18 @@ services:
       - aiot_network
     restart: unless-stopped
 
-  postgres:
-    image: postgres:16
-    container_name: aiot-postgres
-    environment:
-      POSTGRES_DB: ${POSTGRES_DB}
-      POSTGRES_USER: ${POSTGRES_USER}
-      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
-    ports:
-      - "127.0.0.1:5432:5432"
-    volumes:
-      - postgres_data:/var/lib/postgresql/data
-    networks:
-      - aiot_network
-    healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U $${POSTGRES_USER} -d $${POSTGRES_DB}"]
-      interval: 5s
-      timeout: 5s
-      retries: 10
-    restart: unless-stopped
-
   backend:
     build: ./BACKEND
     container_name: aiot-backend
     environment:
-      DATABASE_URL: postgresql://${POSTGRES_USER}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB}
+      DATABASE_PATH: /app/data/aiot.db
       MQTT_HOST: mosquitto
       MQTT_PORT: 1883
     ports:
       - "127.0.0.1:8000:8000"
+    volumes:
+      - sqlite_data:/app/data
     depends_on:
-      postgres:
-        condition: service_healthy
       mosquitto:
         condition: service_started
     networks:
@@ -56,6 +36,6 @@ networks:
     driver: bridge
 
 volumes:
-  postgres_data:
+  sqlite_data:
   mosquitto_data:
   mosquitto_log:
