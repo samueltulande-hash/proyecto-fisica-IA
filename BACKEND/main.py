@@ -6,7 +6,8 @@ from contextlib import asynccontextmanager
 import psycopg
 import paho.mqtt.client as mqtt
 from fastapi import FastAPI, Query
-
+from pydantic import ValidationError
+from schemas import SensorMeasurement
 # --------------------------------------------------
 # CONFIGURACION GENERAL
 # --------------------------------------------------
@@ -16,7 +17,7 @@ logger = logging.getLogger(__name__)
 
 MQTT_HOST = os.getenv("MQTT_HOST", "localhost")
 MQTT_PORT = int(os.getenv("MQTT_PORT", "1883"))
-MQTT_TOPIC = "aiot/pruebas"
+MQTT_TOPIC = "aiot/sensores/#"
 
 DATABASE_URL = os.getenv("DATABASE_URL")
 
@@ -75,13 +76,27 @@ def on_message(client, userdata, msg):
             payload
         )
 
+        # Validar el mensaje JSON con Pydantic
+        medicion = SensorMeasurement.model_validate_json(payload)
+
+        logger.info(
+            "Medicion valida | Dispositivo: %s | Temperatura: %s | Humedad: %s",
+            medicion.device_id,
+            medicion.temperature,
+            medicion.humidity
+        )
+
+        # Guardar el mensaje original en PostgreSQL
         save_message(msg.topic, payload)
 
     except UnicodeDecodeError:
         logger.error("El mensaje recibido no tiene formato UTF-8 valido")
 
+    except ValidationError:
+        logger.exception("Mensaje rechazado: los datos no cumplen el esquema")
+
     except Exception:
-        logger.exception("Error al guardar el mensaje en PostgreSQL")
+        logger.exception("Error al procesar el mensaje MQTT")
 
 
 def on_connect(client, userdata, flags, reason_code, properties):
