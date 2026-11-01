@@ -6,7 +6,7 @@ services:
     ports:
       - "1883:1883"
     volumes:
-      - ./mosquitto/mosquitto.conf:/mosquitto/config/mosquitto.conf:ro
+      - ./MOSQUITTO/mosquitto.conf:/mosquitto/config/mosquitto.conf:ro
       - mosquitto_data:/mosquitto/data
       - mosquitto_log:/mosquitto/log
     networks:
@@ -34,7 +34,7 @@ services:
     restart: unless-stopped
 
   backend:
-    build: ./backend
+    build: ./BACKEND
     container_name: aiot-backend
     environment:
       DATABASE_URL: postgresql://${POSTGRES_USER}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB}
