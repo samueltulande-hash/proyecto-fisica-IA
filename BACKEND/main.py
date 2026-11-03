@@ -1,5 +1,6 @@
 import os
 import logging
+import sqlite3
 
 from contextlib import asynccontextmanager
 
@@ -8,9 +9,17 @@ import paho.mqtt.client as mqtt
 from fastapi import FastAPI, Query, HTTPException
 from pydantic import ValidationError
 
+from datetime import datetime, timezone
 from database import database_connection, initialize_database
 from schemas import SensorMeasurement, DeviceCreate, CapabilityCreate, SensorCreate
-
+from schemas import (
+    SensorMeasurement,
+    DeviceCreate,
+    CapabilityCreate,
+    SensorCreate,
+    DeviceRegister,
+    DeviceStatus
+)
 
 # --------------------------------------------------
 # CONFIGURACION GENERAL
@@ -22,6 +31,8 @@ logger = logging.getLogger(__name__)
 MQTT_HOST = os.getenv("MQTT_HOST", "localhost")
 MQTT_PORT = int(os.getenv("MQTT_PORT", "1883"))
 MQTT_TOPIC = "aiot/sensores/#"
+MQTT_REGISTER_TOPIC = "aiot/devices/register"
+MQTT_STATUS_TOPIC = "aiot/devices/+/status"
 
 def save_message(topic, payload, medicion):
 
@@ -141,42 +152,273 @@ def on_message(client, userdata, msg):
             payload
         )
 
-        # Validar el mensaje JSON con Pydantic
-        medicion = SensorMeasurement.model_validate_json(payload)
+        # ======================================
+        # 1. REGISTRO AUTOMATICO DE DISPOSITIVOS
+        # ======================================
 
-        logger.info(
-            "Medicion valida | Dispositivo: %s | Temperatura: %s | Humedad: %s",
-            medicion.device_id,
-            medicion.temperature,
-            medicion.humidity
+        if msg.topic == MQTT_REGISTER_TOPIC:
+
+            device = DeviceRegister.model_validate_json(payload)
+
+            save_device_registration(
+                msg.topic,
+                payload,
+                device
+            )
+
+            return
+
+        # ======================================
+        # 2. ACTUALIZACION DE ESTADO
+        # ======================================
+
+        if msg.topic.startswith("aiot/devices/") and msg.topic.endswith("/status"):
+
+            device_status = DeviceStatus.model_validate_json(payload)
+
+            topic_device_id = msg.topic.split("/")[2]
+
+            if topic_device_id != device_status.device_id:
+
+                logger.error(
+                    "El device_id no coincide con el topico MQTT"
+                )
+
+                return
+
+            update_device_status(
+                device_status.device_id,
+                device_status.status,
+                payload
+            )
+
+            return
+
+        # ======================================
+        # 3. RECEPCION DE MEDICIONES
+        # ======================================
+
+        if msg.topic.startswith("aiot/sensores/"):
+
+            medicion = SensorMeasurement.model_validate_json(payload)
+
+            logger.info(
+                "Medicion valida | Dispositivo: %s | Temperatura: %s | Humedad: %s",
+                medicion.device_id,
+                medicion.temperature,
+                medicion.humidity
+            )
+
+            save_message(
+                msg.topic,
+                payload,
+                medicion
+            )
+
+            return
+
+        logger.warning(
+            "Mensaje recibido en un topico no reconocido: %s",
+            msg.topic
         )
 
-        # Guardar los datos en SQLite
-        save_message(msg.topic, payload, medicion)
-
     except UnicodeDecodeError:
-        logger.error("El mensaje recibido no tiene formato UTF-8 valido")
+
+        logger.error(
+            "El mensaje recibido no tiene formato UTF-8 valido"
+        )
 
     except ValidationError:
-        logger.exception("Mensaje rechazado: los datos no cumplen el esquema")
+
+        logger.exception(
+            "Mensaje rechazado: los datos no cumplen el esquema"
+        )
 
     except Exception:
-        logger.exception("Error al procesar el mensaje MQTT")
+
+        logger.exception(
+            "Error al procesar el mensaje MQTT"
+        )
 
 
 def on_connect(client, userdata, flags, reason_code, properties):
 
     if reason_code == 0:
 
-        logger.info("Conectado correctamente al broker MQTT")
+        logger.info("Conexion MQTT establecida correctamente")
 
-        client.subscribe(MQTT_TOPIC)
+        client.subscribe(MQTT_TOPIC, qos=1)
+        client.subscribe(MQTT_REGISTER_TOPIC, qos=1)
+        client.subscribe(MQTT_STATUS_TOPIC, qos=1)
 
-        logger.info("Suscrito al topico: %s", MQTT_TOPIC)
+        logger.info("Suscrito a: %s", MQTT_TOPIC)
+        logger.info("Suscrito a: %s", MQTT_REGISTER_TOPIC)
+        logger.info("Suscrito a: %s", MQTT_STATUS_TOPIC)
 
     else:
+        logger.error(
+            "Error al conectar con MQTT. Codigo: %s",
+            reason_code
+        )
+  
 
-        logger.error("Error de conexion MQTT: %s", reason_code)
+def save_device_registration(topic, payload, device):
+
+    current_time = datetime.now(timezone.utc).isoformat()
+
+    with database_connection() as connection:
+
+        # 1. Registrar o actualizar el dispositivo
+        connection.execute(
+            """
+            INSERT INTO devices (
+                device_id,
+                name,
+                device_type,
+                status,
+                firmware_version,
+                ip,
+                last_seen
+            )
+            VALUES (?, ?, ?, ?, ?, ?, ?)
+
+            ON CONFLICT(device_id) DO UPDATE SET
+                name = excluded.name,
+                device_type = excluded.device_type,
+                status = 'online',
+                firmware_version = excluded.firmware_version,
+                ip = excluded.ip,
+                last_seen = excluded.last_seen,
+                updated_at = CURRENT_TIMESTAMP
+            """,
+            (
+                device.device_id,
+                device.device_id,
+                device.device_type,
+                "online",
+                device.firmware_version,
+                device.ip,
+                current_time
+            )
+        )
+
+        # 2. Obtener el ID interno del dispositivo
+        registered_device = connection.execute(
+            """
+            SELECT id
+            FROM devices
+            WHERE device_id = ?
+            """,
+            (device.device_id,)
+        ).fetchone()
+
+        internal_id = registered_device["id"]
+
+        # 3. Sincronizar las capacidades recibidas
+        connection.execute(
+            """
+            DELETE FROM capabilities
+            WHERE device_id = ?
+            """,
+            (internal_id,)
+        )
+
+        for capability in device.capabilities:
+
+            connection.execute(
+                """
+                INSERT INTO capabilities (
+                    device_id,
+                    name,
+                    capability_type,
+                    description
+                )
+                VALUES (?, ?, ?, ?)
+                """,
+                (
+                    internal_id,
+                    capability.name,
+                    capability.capability_type,
+                    capability.description
+                )
+            )
+
+        # 4. Guardar el mensaje MQTT original
+        connection.execute(
+            """
+            INSERT INTO mqtt_messages (topic, payload)
+            VALUES (?, ?)
+            """,
+            (topic, payload)
+        )
+
+    logger.info(
+        "Dispositivo registrado correctamente: %s",
+        device.device_id
+    )
+
+
+    # --------------------------------------------------
+# ACTUALIZAR ESTADO DE DISPOSITIVOS
+# --------------------------------------------------
+
+def update_device_status(device_id, status, payload):
+
+    current_time = datetime.now(timezone.utc).isoformat()
+
+    with database_connection() as connection:
+
+        # 1. Comprobar que el dispositivo existe
+        device = connection.execute(
+            """
+            SELECT id
+            FROM devices
+            WHERE device_id = ?
+            """,
+            (device_id,)
+        ).fetchone()
+
+        if device is None:
+            logger.warning(
+                "No se puede actualizar el estado. Dispositivo no registrado: %s",
+                device_id
+            )
+            return
+
+        # 2. Actualizar estado y ultima comunicacion
+        connection.execute(
+            """
+            UPDATE devices
+            SET
+                status = ?,
+                last_seen = ?,
+                updated_at = CURRENT_TIMESTAMP
+            WHERE device_id = ?
+            """,
+            (
+                status,
+                current_time,
+                device_id
+            )
+        )
+
+        # 3. Guardar mensaje MQTT original
+        connection.execute(
+            """
+            INSERT INTO mqtt_messages (topic, payload)
+            VALUES (?, ?)
+            """,
+            (
+                f"aiot/devices/{device_id}/status",
+                payload
+            )
+        )
+
+    logger.info(
+        "Estado actualizado | Dispositivo: %s | Estado: %s",
+        device_id,
+        status
+    )
 
 
 # --------------------------------------------------
@@ -332,16 +574,19 @@ def get_measurements(
 def get_devices():
     with database_connection() as connection:
         cursor = connection.execute("""
-            SELECT
-                id,
-                device_id,
-                name,
-                device_type,
-                status,
-                location,
-                created_at,
-                updated_at
-            FROM devices
+           SELECT
+            id,
+         device_id,
+         name,
+    device_type,
+    status,
+    location,
+    firmware_version,
+    ip,
+    last_seen,
+    created_at,
+    updated_at
+FROM devices
             ORDER BY device_id
         """)
         rows = cursor.fetchall()
@@ -349,7 +594,7 @@ def get_devices():
     return [dict(row) for row in rows]
 
 @app.get("/devices/{device_id}")
-def get_device(device_id: int):
+def get_device(device_id: str):
 
     with database_connection() as connection:
         cursor = connection.execute(
@@ -361,10 +606,13 @@ def get_device(device_id: int):
                 device_type,
                 status,
                 location,
+                firmware_version,
+                ip,
+                last_seen,
                 created_at,
                 updated_at
             FROM devices
-            WHERE id = ?
+            WHERE device_id = ?
             """,
             (device_id,)
         )
@@ -380,7 +628,7 @@ def get_device(device_id: int):
     return dict(row)
 
 @app.get("/devices/{device_id}/status")
-def get_device_status(device_id: int):
+def get_device_status(device_id: str):
 
     with database_connection() as connection:
         cursor = connection.execute(
@@ -388,9 +636,11 @@ def get_device_status(device_id: int):
             SELECT
                 id,
                 device_id,
-                status
+                status,
+                last_seen,
+                updated_at
             FROM devices
-            WHERE id = ?
+            WHERE device_id = ?
             """,
             (device_id,)
         )
@@ -406,7 +656,7 @@ def get_device_status(device_id: int):
     return dict(row)
 
 @app.get("/devices/{device_id}/capabilities")
-def get_device_capabilities(device_id: int):
+def get_device_capabilities(device_id: str):
 
     with database_connection() as connection:
 
@@ -415,7 +665,7 @@ def get_device_capabilities(device_id: int):
             """
             SELECT id, device_id
             FROM devices
-            WHERE id = ?
+            WHERE device_id = ?
             """,
             (device_id,)
         ).fetchone()
@@ -426,7 +676,7 @@ def get_device_capabilities(device_id: int):
                 detail="Dispositivo no encontrado"
             )
 
-        # Consultar las capacidades del dispositivo
+        # Consultar las capacidades usando el ID interno
         cursor = connection.execute(
             """
             SELECT
@@ -438,7 +688,7 @@ def get_device_capabilities(device_id: int):
             WHERE device_id = ?
             ORDER BY id
             """,
-            (device_id,)
+            (device["id"],)
         )
 
         capabilities = cursor.fetchall()
@@ -450,7 +700,7 @@ def get_device_capabilities(device_id: int):
 
 @app.post("/devices/{device_id}/capabilities", status_code=201)
 def create_device_capability(
-    device_id: int,
+    device_id: str,
     capability: CapabilityCreate
 ):
 
@@ -461,7 +711,7 @@ def create_device_capability(
             """
             SELECT id, device_id
             FROM devices
-            WHERE id = ?
+            WHERE device_id = ?
             """,
             (device_id,)
         ).fetchone()
@@ -473,23 +723,30 @@ def create_device_capability(
             )
 
         # Registrar la capacidad
-        cursor = connection.execute(
-            """
-            INSERT INTO capabilities (
-                device_id,
-                name,
-                capability_type,
-                description
+        try:
+            cursor = connection.execute(
+                """
+                INSERT INTO capabilities (
+                    device_id,
+                    name,
+                    capability_type,
+                    description
+                )
+                VALUES (?, ?, ?, ?)
+                """,
+                (
+                    device["id"],
+                    capability.name,
+                    capability.capability_type,
+                    capability.description
+                )
             )
-            VALUES (?, ?, ?, ?)
-            """,
-            (
-                device_id,
-                capability.name,
-                capability.capability_type,
-                capability.description
+
+        except sqlite3.IntegrityError:
+            raise HTTPException(
+                status_code=409,
+                detail="El dispositivo ya tiene registrada esta capacidad"
             )
-        )
 
         capability_id = cursor.lastrowid
 
@@ -511,11 +768,17 @@ def create_device_capability(
     return dict(new_capability)
 
 @app.post("/devices/{device_id}/sensors", status_code=201)
-def create_sensor(device_id: int, sensor: SensorCreate):
+def create_sensor(device_id: str, sensor: SensorCreate):
+
     with database_connection() as connection:
+
         # 1. Comprobar que el dispositivo existe
         device = connection.execute(
-            "SELECT id FROM devices WHERE id = ?",
+            """
+            SELECT id, device_id
+            FROM devices
+            WHERE device_id = ?
+            """,
             (device_id,)
         ).fetchone()
 
@@ -538,7 +801,7 @@ def create_sensor(device_id: int, sensor: SensorCreate):
             VALUES (?, ?, ?, ?, ?)
             """,
             (
-                device_id,
+                device["id"],
                 sensor.name,
                 sensor.sensor_type,
                 sensor.unit,
@@ -556,7 +819,7 @@ def create_sensor(device_id: int, sensor: SensorCreate):
             (cursor.lastrowid,)
         ).fetchone()
 
-        return dict(created_sensor)
+    return dict(created_sensor)
 @app.get("/sensors/{sensor_id}")
 def get_sensor(sensor_id: int):
     with database_connection() as connection:

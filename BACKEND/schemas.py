@@ -1,4 +1,6 @@
 from datetime import datetime
+from ipaddress import ip_address
+from typing import Literal
 
 from pydantic import BaseModel, Field, ConfigDict, field_validator
 
@@ -107,5 +109,77 @@ class SensorCreate(BaseModel):
 
         if not value:
             raise ValueError("Este campo no puede estar vacío")
+
+        return value
+
+    # ==========================================
+# DEVICE REGISTRY
+# ==========================================
+
+class DeviceRegister(BaseModel):
+
+    model_config = ConfigDict(extra="forbid")
+
+    device_id: str = Field(min_length=1, max_length=100)
+
+    device_type: str = Field(min_length=1, max_length=50)
+
+    firmware_version: str = Field(min_length=1, max_length=50)
+
+    ip: str
+
+    capabilities: list[CapabilityCreate] = Field(
+        default_factory=list,
+        max_length=30
+    )
+
+    @field_validator(
+        "device_id",
+        "device_type",
+        "firmware_version"
+    )
+    @classmethod
+    def validate_text_fields(cls, value: str) -> str:
+
+        value = value.strip()
+
+        if not value:
+            raise ValueError("Este campo no puede estar vacio")
+
+        return value
+
+    @field_validator("ip")
+    @classmethod
+    def validate_ip(cls, value: str) -> str:
+
+        value = value.strip()
+
+        try:
+            return str(ip_address(value))
+        except ValueError:
+            raise ValueError("La direccion IP no es valida")
+
+        
+# ==========================================
+# DEVICE REGISTRY
+# ==========================================
+
+
+class DeviceStatus(BaseModel):
+
+    model_config = ConfigDict(extra="forbid")
+
+    device_id: str = Field(min_length=1, max_length=100)
+
+    status: Literal["online", "offline"]
+
+    @field_validator("device_id")
+    @classmethod
+    def validate_device_id(cls, value: str) -> str:
+
+        value = value.strip()
+
+        if not value:
+            raise ValueError("device_id no puede estar vacio")
 
         return value

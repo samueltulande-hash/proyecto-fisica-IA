@@ -72,15 +72,14 @@ def initialize_database():
     with database_connection() as connection:
 
         connection.execute("PRAGMA journal_mode = WAL")
-
-        # 1. Preparar las tablas anteriores
         prepare_legacy_tables(connection)
-
-        # 2. Crear las nuevas tablas
         create_tables(connection)
-
-        # 3. Migrar los datos anteriores
         migrate_legacy_data(connection)
+        migrate_device_registry_schema(connection)
+
+
+        
+       
 
     logger.info(
         "Base de datos AIoT-CORE inicializada correctamente"
@@ -310,6 +309,14 @@ def create_tables(connection):
     """)
 
     logger.info("Tablas e indices creados correctamente")
+    
+    connection.execute(
+    """
+    CREATE UNIQUE INDEX IF NOT EXISTS
+    idx_capabilities_device_type
+    ON capabilities (device_id, capability_type)
+    """
+)
 
 def migrate_legacy_data(connection):
 
@@ -473,4 +480,52 @@ def migrate_legacy_data(connection):
 
     logger.info(
         "Migracion de dispositivos y mediciones completada"
+    )
+
+    
+def migrate_device_registry_schema(connection):
+
+    # Consultar las columnas actuales de devices
+    existing_columns = {
+        row["name"]
+        for row in connection.execute(
+            "PRAGMA table_info(devices)"
+        ).fetchall()
+    }
+
+    # Agregar version del firmware
+    if "firmware_version" not in existing_columns:
+        connection.execute("""
+            ALTER TABLE devices
+            ADD COLUMN firmware_version TEXT
+        """)
+
+    # Agregar direccion IP
+    if "ip" not in existing_columns:
+        connection.execute("""
+            ALTER TABLE devices
+            ADD COLUMN ip TEXT
+        """)
+
+    # Agregar ultima comunicacion
+    if "last_seen" not in existing_columns:
+        connection.execute("""
+            ALTER TABLE devices
+            ADD COLUMN last_seen TEXT
+        """)
+
+    # Registrar migracion version 2
+    connection.execute("""
+        INSERT OR IGNORE INTO schema_migrations (
+            version,
+            description
+        )
+        VALUES (?, ?)
+    """, (
+        2,
+        "Agregar campos para Device Registry"
+    ))
+
+    logger.info(
+        "Migracion Device Registry aplicada correctamente"
     )
