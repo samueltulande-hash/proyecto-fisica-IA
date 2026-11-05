@@ -1,0 +1,7 @@
+user aiot_backend
+topic read aiot/sensores/#
+topic read aiot/devices/register
+topic read aiot/devices/+/status
+topic read aiot/devices/+/response
+topic read aiot/devices/+/error
+topic write aiot/devices/+/command

@@ -8,10 +8,11 @@ services:
     volumes:
       - ./MOSQUITTO/mosquitto.conf:/mosquitto/config/mosquitto.conf:ro
       - ./MOSQUITTO/passwd:/mosquitto/config/passwd:ro
+      - ./MOSQUITTO/acl:/mosquitto/config/acl:ro
+      - ./MOSQUITTO/certs:/mosquitto/config/certs:ro
       - mosquitto_data:/mosquitto/data
       - mosquitto_log:/mosquitto/log
-    networks:
-      - aiot_network
+
     restart: unless-stopped
 
   backend:
