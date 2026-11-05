@@ -1,4 +1,4 @@
-
+﻿
 services:
   mosquitto:
     image: eclipse-mosquitto:2
@@ -7,6 +7,7 @@ services:
       - "1883:1883"
     volumes:
       - ./MOSQUITTO/mosquitto.conf:/mosquitto/config/mosquitto.conf:ro
+      - ./MOSQUITTO/passwd:/mosquitto/config/passwd:ro
       - mosquitto_data:/mosquitto/data
       - mosquitto_log:/mosquitto/log
     networks:
@@ -20,6 +21,12 @@ services:
       DATABASE_PATH: /app/data/aiot.db
       MQTT_HOST: mosquitto
       MQTT_PORT: 1883
+      MQTT_USERNAME: ${MQTT_USERNAME}
+      MQTT_PASSWORD: ${MQTT_PASSWORD}
+      OLLAMA_URL: http://host.docker.internal:11434
+      JWT_SECRET_KEY: ${JWT_SECRET_KEY}
+      JWT_ALGORITHM: HS256
+      JWT_ACCESS_TOKEN_EXPIRE_MINUTES: 30
     ports:
       - "127.0.0.1:8000:8000"
     volumes:
@@ -29,11 +36,15 @@ services:
         condition: service_started
     networks:
       - aiot_network
+      - openclaw_api_network
     restart: unless-stopped
 
 networks:
   aiot_network:
     driver: bridge
+  openclaw_api_network:
+    external: true
+    name: aiot_openclaw_api_network
 
 volumes:
   sqlite_data:

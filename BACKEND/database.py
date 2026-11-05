@@ -76,6 +76,8 @@ def initialize_database():
         create_tables(connection)
         migrate_legacy_data(connection)
         migrate_device_registry_schema(connection)
+        migrate_command_gateway_schema(connection)
+        migrate_device_auth_schema(connection)
 
 
         
@@ -309,7 +311,7 @@ def create_tables(connection):
     """)
 
     logger.info("Tablas e indices creados correctamente")
-    
+
     connection.execute(
     """
     CREATE UNIQUE INDEX IF NOT EXISTS
@@ -528,4 +530,152 @@ def migrate_device_registry_schema(connection):
 
     logger.info(
         "Migracion Device Registry aplicada correctamente"
+    )
+    # ==========================================
+# MIGRACION 3 - COMMAND GATEWAY
+# ==========================================
+
+def migrate_command_gateway_schema(connection):
+
+    # Consultar columnas actuales de commands
+    existing_columns = {
+        row["name"]
+        for row in connection.execute(
+            "PRAGMA table_info(commands)"
+        ).fetchall()
+    }
+
+    # Identificador unico para correlacionar comandos MQTT
+    if "command_uuid" not in existing_columns:
+        connection.execute("""
+            ALTER TABLE commands
+            ADD COLUMN command_uuid TEXT
+        """)
+
+    # Fecha de envio del comando
+    if "sent_at" not in existing_columns:
+        connection.execute("""
+            ALTER TABLE commands
+            ADD COLUMN sent_at TEXT
+        """)
+
+    # Fecha de confirmacion del dispositivo
+    if "acknowledged_at" not in existing_columns:
+        connection.execute("""
+            ALTER TABLE commands
+            ADD COLUMN acknowledged_at TEXT
+        """)
+
+    # Fecha de finalizacion
+    if "completed_at" not in existing_columns:
+        connection.execute("""
+            ALTER TABLE commands
+            ADD COLUMN completed_at TEXT
+        """)
+
+    # Fecha limite de espera
+    if "timeout_at" not in existing_columns:
+        connection.execute("""
+            ALTER TABLE commands
+            ADD COLUMN timeout_at TEXT
+        """)
+
+    # Numero de reintentos realizados
+    if "retry_count" not in existing_columns:
+        connection.execute("""
+            ALTER TABLE commands
+            ADD COLUMN retry_count INTEGER NOT NULL DEFAULT 0
+        """)
+
+    # Descripcion del error, si ocurre
+    if "error_message" not in existing_columns:
+        connection.execute("""
+            ALTER TABLE commands
+            ADD COLUMN error_message TEXT
+        """)
+
+    # Ultima actualizacion del comando
+    if "updated_at" not in existing_columns:
+        connection.execute("""
+            ALTER TABLE commands
+            ADD COLUMN updated_at TEXT
+        """)
+
+    # Asignar identificadores a comandos antiguos
+    import uuid
+
+    old_commands = connection.execute("""
+        SELECT id
+        FROM commands
+        WHERE command_uuid IS NULL
+    """).fetchall()
+
+    for command in old_commands:
+        connection.execute(
+            """
+            UPDATE commands
+            SET command_uuid = ?
+            WHERE id = ?
+            """,
+            (
+                str(uuid.uuid4()),
+                command["id"]
+            )
+        )
+
+    # Garantizar que no existan identificadores duplicados
+    connection.execute("""
+        CREATE UNIQUE INDEX IF NOT EXISTS
+        idx_commands_uuid
+        ON commands(command_uuid)
+    """)
+
+    # Registrar migracion version 3
+    connection.execute("""
+        INSERT OR IGNORE INTO schema_migrations (
+            version,
+            description
+        )
+        VALUES (?, ?)
+    """, (
+        3,
+        "Agregar campos para Command Gateway"
+    ))
+
+    logger.info(
+        "Migracion Command Gateway aplicada correctamente"
+    )
+
+# ==========================================
+# MIGRACION 4 - AUTENTICACION DE DISPOSITIVOS
+# ==========================================
+
+def migrate_device_auth_schema(connection):
+
+    existing_columns = {
+        row["name"]
+        for row in connection.execute(
+            "PRAGMA table_info(devices)"
+        ).fetchall()
+    }
+
+    if "secret_hash" not in existing_columns:
+        connection.execute("""
+            ALTER TABLE devices
+            ADD COLUMN secret_hash TEXT
+        """)
+
+    connection.execute("""
+        INSERT OR IGNORE INTO schema_migrations (
+            version,
+            description
+        )
+        VALUES (?, ?)
+    """, (
+        4,
+        "Agregar autenticacion individual de dispositivos"
+    ))
+
+    logger.info(
+        "Migracion de autenticacion de dispositivos aplicada"
     )

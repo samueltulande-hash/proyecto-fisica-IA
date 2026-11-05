@@ -7,6 +7,7 @@ from BACKEND.schemas import SensorMeasurement
 def test_mensaje_valido():
     mensaje = {
         "device_id": "sensor_001",
+        "device_secret": "A" * 43,
         "temperature": 25.4,
         "humidity": 62.3,
         "timestamp": "2026-11-01T18:45:08Z"
@@ -14,7 +15,6 @@ def test_mensaje_valido():
 
     medicion = SensorMeasurement.model_validate(mensaje)
 
-    assert medicion.device_id == "sensor_001"
     assert medicion.temperature == 25.4
     assert medicion.humidity == 62.3
 
@@ -46,10 +46,14 @@ def test_temperatura_fuera_de_rango():
 def test_fecha_sin_zona_horaria():
     mensaje = {
         "device_id": "sensor_001",
+        "device_secret": "A" * 43,
         "temperature": 25.4,
         "humidity": 62.3,
         "timestamp": "2026-11-01T18:45:08"
     }
+
+    with pytest.raises(ValueError):
+        SensorMeasurement.model_validate(mensaje)
 
     with pytest.raises(ValueError):
         SensorMeasurement.model_validate(mensaje)

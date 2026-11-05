@@ -1,15 +1,15 @@
 from datetime import datetime
 from ipaddress import ip_address
 from typing import Literal
-
 from pydantic import BaseModel, Field, ConfigDict, field_validator
-
 
 class SensorMeasurement(BaseModel):
 
     model_config = ConfigDict(extra="forbid")
 
     device_id: str = Field(min_length=1, max_length=100)
+
+    device_secret: str = Field(min_length=32, max_length=128)
 
     temperature: float = Field(ge=-40, le=85)
 
@@ -122,9 +122,14 @@ class DeviceRegister(BaseModel):
 
     device_id: str = Field(min_length=1, max_length=100)
 
+    device_secret: str = Field(min_length=32, max_length=128)
+
     device_type: str = Field(min_length=1, max_length=50)
 
     firmware_version: str = Field(min_length=1, max_length=50)
+
+    device_secret: str = Field(min_length=32, max_length=128)
+
 
     ip: str
 
@@ -171,6 +176,8 @@ class DeviceStatus(BaseModel):
 
     device_id: str = Field(min_length=1, max_length=100)
 
+    device_secret: str = Field(min_length=32, max_length=128)
+
     status: Literal["online", "offline"]
 
     @field_validator("device_id")
@@ -183,3 +190,108 @@ class DeviceStatus(BaseModel):
             raise ValueError("device_id no puede estar vacio")
 
         return value
+    # ==========================================
+# COMMAND GATEWAY - SPRINT 5
+# ==========================================
+
+class CommandCreate(BaseModel):
+
+    model_config = ConfigDict(extra="forbid")
+
+    command_type: Literal[
+        "get_status",
+        "read_sensor",
+        "ping"
+    ]
+
+    payload: dict = Field(default_factory=dict, max_length=10)
+
+
+class CommandResponse(BaseModel):
+
+    model_config = ConfigDict(extra="forbid")
+
+    command_uuid: str = Field(min_length=1, max_length=36)
+
+    device_id: str = Field(min_length=1, max_length=100)
+
+    device_secret: str = Field(min_length=32, max_length=128)
+
+    status: Literal[
+        "received",
+        "completed",
+        "failed"
+    ]
+
+    message: str | None = Field(default=None, max_length=250)
+
+
+class CommandError(BaseModel):
+
+    model_config = ConfigDict(extra="forbid")
+
+    command_uuid: str = Field(min_length=1, max_length=36)
+
+    device_id: str = Field(min_length=1, max_length=100)
+
+    device_secret: str = Field(min_length=32, max_length=128)
+
+    error: str = Field(min_length=1, max_length=250)
+    # ==========================================
+# AI ASSISTANT - OLLAMA
+# ==========================================
+
+class AssistantChatRequest(BaseModel):
+
+    model_config = ConfigDict(extra="forbid")
+
+    message: str = Field(min_length=1, max_length=2000)
+
+    device_id: str | None = Field(
+        default=None,
+        max_length=100
+    )
+
+
+class AssistantChatResponse(BaseModel):
+
+    model_config = ConfigDict(extra="forbid")
+
+    response: str
+
+    device_id: str | None = None
+
+    command_uuid: str | None = None
+
+    status: str = "completed"
+
+    # ==========================================
+# AUTENTICACION JWT - SPRINT 6
+# ==========================================
+
+class UserCreate(BaseModel):
+
+    model_config = ConfigDict(extra="forbid")
+
+    username: str = Field(min_length=3, max_length=50)
+    email: str = Field(min_length=5, max_length=150)
+    password: str = Field(min_length=8, max_length=128)
+
+
+class Token(BaseModel):
+
+    model_config = ConfigDict(extra="forbid")
+
+    access_token: str
+    token_type: str = "bearer"
+
+
+class UserResponse(BaseModel):
+
+    model_config = ConfigDict(extra="forbid")
+
+    id: int
+    username: str
+    email: str
+    role: str
+    is_active: bool
