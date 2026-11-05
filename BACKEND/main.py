@@ -58,7 +58,7 @@ MQTT_PORT = int(os.getenv("MQTT_PORT", "1883"))
 MQTT_USERNAME = os.getenv("MQTT_USERNAME")
 MQTT_PASSWORD = os.getenv("MQTT_PASSWORD")
 "OLLAMA_URL",
-http://host.docker.internal:11434"
+"http://host.docker.internal:11434"
 
 
 OLLAMA_MODEL = os.getenv(
@@ -1345,7 +1345,7 @@ def create_user(
                     data.username,
                     data.email,
                     get_password_hash(data.password),
-                    "user"
+                    data.role
                 )
             )
 
@@ -1358,12 +1358,12 @@ def create_user(
             )
 
     return UserResponse(
-        id=user_id,
-        username=data.username,
-        email=data.email,
-        role="user",
-        is_active=True
-    )
+    id=user_id,
+    username=data.username,
+    email=data.email,
+    role=data.role,
+    is_active=True
+)
 
 
 
@@ -1408,7 +1408,7 @@ def assistant_chat(data: AssistantChatRequest):
 def get_messages(
     limit: int = Query(default=10, ge=1, le=100),
     current_user: dict = Depends(
-        require_roles("admin", "operator", "user")
+      require_roles("admin", "operator", "engineer", "viewer", "user")
     )
 ):
 
@@ -1641,7 +1641,7 @@ def create_device_capability(
     device_id: str,
     capability: CapabilityCreate,
     current_user: dict = Depends(
-        require_roles("admin", "operator")
+       require_roles("admin", "engineer")
     )
 ):
 
@@ -1713,7 +1713,7 @@ def create_sensor(
     device_id: str,
     sensor: SensorCreate,
     current_user: dict = Depends(
-        require_roles("admin", "operator")
+       require_roles("admin", "engineer")
     )
 ):
 
@@ -1801,7 +1801,7 @@ def get_sensor(
 def create_device(
     device: DeviceCreate,
     current_user: dict = Depends(
-        require_roles("admin")
+        require_roles("admin","engineer")
     )
 ):
     with database_connection() as connection:

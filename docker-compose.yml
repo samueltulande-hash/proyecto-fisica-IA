@@ -30,6 +30,7 @@ services:
     ports:
       - "127.0.0.1:8000:8000"
     volumes:
+      - ./BACKEND:/app
       - sqlite_data:/app/data
     depends_on:
       mosquitto:
@@ -43,8 +44,6 @@ networks:
   aiot_network:
     driver: bridge
   openclaw_api_network:
-    external: true
-    name: aiot_openclaw_api_network
 
 volumes:
   sqlite_data:

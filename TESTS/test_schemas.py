@@ -1,7 +1,6 @@
 
 import pytest
-
-from BACKEND.schemas import SensorMeasurement
+from BACKEND.schemas import SensorMeasurement, UserCreate
 
 
 def test_mensaje_valido():
@@ -57,3 +56,40 @@ def test_fecha_sin_zona_horaria():
 
     with pytest.raises(ValueError):
         SensorMeasurement.model_validate(mensaje)
+# ==========================================
+# PRUEBAS RBAC - SPRINT 6
+# ==========================================
+
+@pytest.mark.parametrize(
+    "role",
+    ["viewer", "operator", "engineer", "admin"]
+)
+def test_roles_permitidos(role):
+    usuario = UserCreate(
+        username="usuario_test",
+        email="test@example.com",
+        password="Password123",
+        role=role
+    )
+
+    assert usuario.role == role
+
+
+def test_rol_invalido_rechazado():
+    with pytest.raises(ValueError):
+        UserCreate(
+            username="usuario_test",
+            email="test@example.com",
+            password="Password123",
+            role="superadmin"
+        )
+
+
+def test_rol_por_defecto_viewer():
+    usuario = UserCreate(
+        username="usuario_test",
+        email="test@example.com",
+        password="Password123"
+    )
+
+    assert usuario.role == "viewer"
