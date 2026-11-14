@@ -57,8 +57,10 @@ MQTT_HOST = os.getenv("MQTT_HOST", "localhost")
 MQTT_PORT = int(os.getenv("MQTT_PORT", "1883"))
 MQTT_USERNAME = os.getenv("MQTT_USERNAME")
 MQTT_PASSWORD = os.getenv("MQTT_PASSWORD")
-"OLLAMA_URL",
-"http://host.docker.internal:11434"
+OLLAMA_URL = os.getenv(
+    "OLLAMA_URL",
+    "http://host.docker.internal:11434"
+)
 
 
 OLLAMA_MODEL = os.getenv(
@@ -907,41 +909,81 @@ def update_device_status(device_id, status, payload):
         status
     )
 
+
+
 # --------------------------------------------------
 # EJECUTOR SEGURO DE HERRAMIENTAS
 # --------------------------------------------------
 
 def execute_aiot_tool(tool_name: str, arguments: dict):
 
+    # 1. LISTAR DISPOSITIVOS
     if tool_name == "list_devices":
         return get_devices()
 
+    # 2. CONSULTAR ESTADO DE UN DISPOSITIVO
     if tool_name == "get_device_status":
         device_id = arguments.get("device_id")
 
         if not isinstance(device_id, str) or not device_id.strip():
-            raise ValueError("device_id invÃ¡lido")
+            raise ValueError("device_id inválido")
 
         return get_device_status(device_id.strip())
 
+    # 3. CONSULTAR CAPACIDADES
     if tool_name == "get_device_capabilities":
         device_id = arguments.get("device_id")
 
         if not isinstance(device_id, str) or not device_id.strip():
-            raise ValueError("device_id invÃ¡lido")
+            raise ValueError("device_id inválido")
 
         return get_device_capabilities(device_id.strip())
 
+    # 4. CONSULTAR SENSORES
+        # 4. CONSULTAR SENSORES
+    if tool_name == "get_sensors":
+        sensor_id = arguments.get("sensor_id")
+
+        if sensor_id is not None:
+            if isinstance(sensor_id, bool) or not isinstance(sensor_id, int):
+                raise ValueError("sensor_id debe ser un entero")
+
+        with database_connection() as connection:
+
+            query = """
+                SELECT
+                    s.id,
+                    s.device_id,
+                    d.device_id AS external_device_id,
+                    s.name,
+                    s.sensor_type,
+                    s.unit,
+                    s.status
+                FROM sensors s
+                JOIN devices d ON s.device_id = d.id
+            """
+
+            if sensor_id is not None:
+                query += " WHERE s.id = ?"
+                sensors = connection.execute(
+                    query, (sensor_id,)
+                ).fetchall()
+            else:
+                sensors = connection.execute(query).fetchall()
+
+        return [dict(sensor) for sensor in sensors]
+
+    # 5. CONSULTAR MEDICIONES
     if tool_name == "get_measurements":
         device_id = arguments.get("device_id")
         sensor_type = arguments.get("sensor_type")
         limit = arguments.get("limit", 10)
 
         if device_id is not None and not isinstance(device_id, str):
-            raise ValueError("device_id invÃ¡lido")
+            raise ValueError("device_id inválido")
 
         if sensor_type is not None and not isinstance(sensor_type, str):
-            raise ValueError("sensor_type invÃ¡lido")
+            raise ValueError("sensor_type inválido")
 
         if isinstance(limit, bool) or not isinstance(limit, int) or not 1 <= limit <= 100:
             raise ValueError("limit debe estar entre 1 y 100")
@@ -952,83 +994,32 @@ def execute_aiot_tool(tool_name: str, arguments: dict):
             limit=limit
         )
 
+    # 6. HERRAMIENTA NO PERMITIDA
     raise ValueError("Herramienta no permitida")
+
+
 # --------------------------------------------------
 # HERRAMIENTAS DEL ASISTENTE AIOT
 # --------------------------------------------------
 
 AIOT_TOOLS = [
-    {
+        {
         "type": "function",
         "function": {
-            "name": "list_devices",
-            "description": "Lista los dispositivos IoT registrados y su estado.",
-            "parameters": {
-                "type": "object",
-                "properties": {},
-                "required": []
-            }
-        }
-    },
-    {
-        "type": "function",
-        "function": {
-            "name": "get_device_status",
-            "description": "Consulta el estado actual de un dispositivo IoT.",
+            "name": "get_sensors",
+            "description": "Consulta los sensores registrados. Permite buscar por ID de sensor, no por ID de dispositivo.",
             "parameters": {
                 "type": "object",
                 "properties": {
-                    "device_id": {
-                        "type": "string",
-                        "description": "Identificador del dispositivo"
-                    }
-                },
-                "required": ["device_id"]
-            }
-        }
-    },
-    {
-        "type": "function",
-        "function": {
-            "name": "get_device_capabilities",
-            "description": "Consulta los sensores y capacidades de un dispositivo.",
-            "parameters": {
-                "type": "object",
-                "properties": {
-                    "device_id": {
-                        "type": "string",
-                        "description": "Identificador del dispositivo"
-                    }
-                },
-                "required": ["device_id"]
-            }
-        }
-    },
-    {
-        "type": "function",
-        "function": {
-            "name": "get_measurements",
-            "description": "Consulta las Ãºltimas mediciones de los sensores.",
-            "parameters": {
-                "type": "object",
-                "properties": {
-                    "device_id": {
-                        "type": "string",
-                        "description": "Identificador del dispositivo (opcional)"
-                    },
-                    "sensor_type": {
-                        "type": "string",
-                        "description": "Tipo de sensor (opcional)"
-                    },
-                    "limit": {
+                    "sensor_id": {
                         "type": "integer",
-                        "description": "Cantidad de mediciones, entre 1 y 100"
+                        "description": "ID interno del sensor (opcional)"
                     }
                 },
                 "required": []
             }
         }
-    }
+    },
 ]
 def ask_ollama(message: str) -> str:
     import urllib.request
@@ -1708,14 +1699,17 @@ def create_device_capability(
 
     return dict(new_capability)
 
+
 @app.post("/devices/{device_id}/sensors", status_code=201)
 def create_sensor(
     device_id: str,
     sensor: SensorCreate,
     current_user: dict = Depends(
-       require_roles("admin", "engineer")
+        require_roles("admin", "engineer")
     )
 ):
+    # Abrir conexión con SQLite
+    with database_connection() as connection:
 
         # 1. Comprobar que el dispositivo existe
         device = connection.execute(
@@ -1754,7 +1748,7 @@ def create_sensor(
             )
         )
 
-        # 3. Recuperar el sensor reciÃ©n creado
+        # 3. Recuperar el sensor recién creado
         created_sensor = connection.execute(
             """
             SELECT id, device_id, name, sensor_type, unit, status
@@ -1763,6 +1757,7 @@ def create_sensor(
             """,
             (cursor.lastrowid,)
         ).fetchone()
+
         return dict(created_sensor)
 
 @app.get("/sensors/{sensor_id}")
