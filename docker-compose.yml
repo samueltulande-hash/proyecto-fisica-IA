@@ -5,14 +5,14 @@ services:
     container_name: aiot-mosquitto
     ports:
       - "1883:1883"
+      - "8883:8883"
     volumes:
       - ./MOSQUITTO/mosquitto.conf:/mosquitto/config/mosquitto.conf:ro
       - ./MOSQUITTO/passwd:/mosquitto/config/passwd:ro
       - ./MOSQUITTO/acl:/mosquitto/config/acl:ro
-      - ./MOSQUITTO/certs:/mosquitto/config/certs:ro
+      - mosquitto_certs:/mosquitto/config/certs:ro
       - mosquitto_data:/mosquitto/data
       - mosquitto_log:/mosquitto/log
-
     restart: unless-stopped
 
   backend:
@@ -50,3 +50,4 @@ volumes:
   sqlite_data:
   mosquitto_data:
   mosquitto_log:
+  mosquitto_certs:
